@@ -42,7 +42,7 @@ export const BOARD_BACKGROUNDS: Array<{
     id: 'start-stop-continue',
     label: 'Start / Stop / Continue',
     description: 'Three-part action board',
-    asset: '/start-stop-continue.png',
+    asset: 'start-stop-continue.png',
     columns: [
       { title: 'Start', description: 'Ideas to try', accent: '#0ea5e9' },
       { title: 'Stop', description: 'Habits to drop', accent: '#f97316' },
@@ -53,7 +53,7 @@ export const BOARD_BACKGROUNDS: Array<{
     id: 'mad-sad-glad',
     label: 'Mad / Sad / Glad',
     description: 'Emotional check-in',
-    asset: '/mad-sad-glad.png',
+    asset: 'mad-sad-glad.png',
     columns: [
       { title: 'Mad', description: 'Frustrations & annoyances', accent: '#f87171' },
       { title: 'Sad', description: 'Letdowns & concerns', accent: '#facc15' },
