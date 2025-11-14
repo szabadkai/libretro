@@ -39,16 +39,6 @@ export const BOARD_BACKGROUNDS: Array<{
   columns: Array<{ title: string; description: string; accent: string }>
 }> = [
   {
-    id: 'good-bad',
-    label: 'Good vs Bad',
-    description: 'Classic two-column retro',
-    asset: '/good-bad.png',
-    columns: [
-      { title: 'Good', description: 'Wins and bright spots', accent: '#22c55e' },
-      { title: 'Bad', description: 'Issues or blockers', accent: '#ef4444' },
-    ],
-  },
-  {
     id: 'start-stop-continue',
     label: 'Start / Stop / Continue',
     description: 'Three-part action board',
@@ -68,18 +58,6 @@ export const BOARD_BACKGROUNDS: Array<{
       { title: 'Mad', description: 'Frustrations & annoyances', accent: '#f87171' },
       { title: 'Sad', description: 'Letdowns & concerns', accent: '#facc15' },
       { title: 'Glad', description: 'Highlights & celebrations', accent: '#34d399' },
-    ],
-  },
-  {
-    id: 'four-ls',
-    label: '4Ls',
-    description: 'Liked, Learned, Lacked, Longed for',
-    asset: '/4Ls.png',
-    columns: [
-      { title: 'Liked', description: 'What worked well', accent: '#22c55e' },
-      { title: 'Learned', description: 'New insights', accent: '#3b82f6' },
-      { title: 'Lacked', description: 'Missing pieces', accent: '#fbbf24' },
-      { title: 'Longed for', description: 'Wish we had…', accent: '#a855f7' },
     ],
   },
 ]

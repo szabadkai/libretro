@@ -1,9 +1,5 @@
 export type ColumnId = 'good' | 'bad' | 'start' | 'stop'
-export type BackgroundKey =
-  | 'good-bad'
-  | 'start-stop-continue'
-  | 'mad-sad-glad'
-  | 'four-ls'
+export type BackgroundKey = 'start-stop-continue' | 'mad-sad-glad'
 
 export interface Note {
   id: string

@@ -21,7 +21,7 @@ export class RetroBoard extends LitElement {
   @state() private panY = 0
   @state() private isPanning = false
   @property({ attribute: false }) highlightedParticipantId: string | null = null
-  @property({ attribute: false }) background: BackgroundKey = 'good-bad'
+  @property({ attribute: false }) background: BackgroundKey = 'start-stop-continue'
   @query('.note-layer') private noteLayer?: HTMLDivElement
 
   private unsubscribe?: () => void
@@ -294,12 +294,12 @@ export class RetroBoard extends LitElement {
 
     .board-template {
       position: absolute;
-      top: clamp(40px, 10vh, 120px);
+      top: clamp(20px, 8vh, 100px);
       left: 50%;
       transform: translateX(-50%);
-      width: min(1100px, calc(100% - 2rem));
-      height: min(620px, calc(100% - 120px));
-      max-height: 720px;
+      width: min(2200px, calc(100% - 1rem));
+      height: min(1240px, calc(100% - 80px));
+      max-height: 1440px;
       background-image: var(--template-image);
       background-size: cover;
       background-position: center;

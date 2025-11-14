@@ -8,6 +8,7 @@ import {
 import type { BackgroundKey, Participant } from "./types";
 import { BOARD_BACKGROUNDS } from "./constants";
 import "./components/retro-board";
+import "./components/confetti-sling";
 
 interface ProfileDraft {
     name: string;
@@ -16,6 +17,7 @@ interface ProfileDraft {
 
 const PROFILE_STORAGE_KEY = "metro-retro-profile";
 const BACKGROUND_STORAGE_KEY = "metro-retro-background";
+const ONBOARDING_STORAGE_KEY = "libretro-onboarding";
 const PROFILE_COLORS = [
     "#fbbf24",
     "#ef4444",
@@ -36,7 +38,9 @@ export class AppRoot extends LitElement {
     @state() private showProfileDialog = false;
     @state() private participants: Participant[] = [];
     @state() private highlightedParticipantId: string | null = null;
-    @state() private background: BackgroundKey = "good-bad";
+    @state() private background: BackgroundKey = "start-stop-continue";
+    @state() private confettiEnabled = false;
+    @state() private showOnboarding = true;
 
     private readonly onHashChange = () => this.handleRoute();
     private readonly onParticipantsChange = (event: Event) => {
@@ -52,20 +56,33 @@ export class AppRoot extends LitElement {
             this.highlightedParticipantId = null;
         }
     };
+    private readonly onBackgroundChange = (event: Event) => {
+        const detail = (event as CustomEvent<BackgroundKey>).detail;
+        if (!detail) return;
+        this.background = detail;
+        this.persistBackground(detail);
+    };
 
     connectedCallback() {
         super.connectedCallback();
         this.initializeProfile();
         this.initializeBackground();
+        this.initializeOnboarding();
         window.addEventListener("hashchange", this.onHashChange);
+        window.addEventListener("keydown", this.handleConfettiShortcut);
         this.handleRoute();
     }
 
     disconnectedCallback() {
         window.removeEventListener("hashchange", this.onHashChange);
+        window.removeEventListener("keydown", this.handleConfettiShortcut);
         this.controller?.removeEventListener(
             "participants-changed",
             this.onParticipantsChange
+        );
+        this.controller?.removeEventListener(
+            "background-changed",
+            this.onBackgroundChange
         );
         this.controller?.dispose();
         super.disconnectedCallback();
@@ -80,6 +97,11 @@ export class AppRoot extends LitElement {
                 .highlightedParticipantId=${this.highlightedParticipantId}
                 .background=${this.background}
             ></retro-board>
+            <confetti-sling
+                .controller=${this.controller}
+                .active=${this.confettiEnabled && ready}
+                @confetti-shot=${this.handleConfettiShot}
+            ></confetti-sling>
             <div class="ui-overlay">
                 ${ready
                     ? html`
@@ -99,12 +121,6 @@ export class AppRoot extends LitElement {
                                   <div class="toolbar-actions">
                                       <button
                                           class="ghost"
-                                          @click=${this.openProfileDialog}
-                                      >
-                                          Profile
-                                      </button>
-                                      <button
-                                          class="ghost"
                                           @click=${this.handleCopyLink}
                                       >
                                           ${this.copyLabel}
@@ -118,6 +134,8 @@ export class AppRoot extends LitElement {
                                   </div>
                               </div>
                           </div>
+                          ${this.renderProfilePanel()}
+                          ${this.renderOnboarding()}
                       `
                     : html`<div class="loading">
                           Preparing your retro board…
@@ -172,6 +190,10 @@ export class AppRoot extends LitElement {
             "participants-changed",
             this.onParticipantsChange
         );
+        this.controller?.removeEventListener(
+            "background-changed",
+            this.onBackgroundChange
+        );
         this.controller?.dispose();
 
         this.boardId = id;
@@ -184,15 +206,22 @@ export class AppRoot extends LitElement {
 
         const controller = new BoardController(
             id,
-            this.profileToParticipant(this.profile)
+            this.profileToParticipant(this.profile),
+            this.background
         );
         controller.addEventListener(
             "participants-changed",
             this.onParticipantsChange
         );
+        controller.addEventListener(
+            "background-changed",
+            this.onBackgroundChange
+        );
 
         this.controller = controller;
         this.participants = controller.getParticipants();
+        this.background = controller.getBoardBackground();
+        this.persistBackground(this.background);
         this.copyState = "idle";
     }
 
@@ -223,6 +252,19 @@ export class AppRoot extends LitElement {
         this.profile = null;
         this.profileDraft = { ...DEFAULT_PROFILE };
         this.showProfileDialog = true;
+    }
+
+    private initializeOnboarding() {
+        if (typeof window === "undefined") {
+            this.showOnboarding = true;
+            return;
+        }
+        try {
+            const stored = window.localStorage.getItem(ONBOARDING_STORAGE_KEY);
+            this.showOnboarding = stored !== "dismissed";
+        } catch {
+            this.showOnboarding = true;
+        }
     }
 
     private readProfileFromStorage(): ProfileDraft | null {
@@ -289,23 +331,10 @@ export class AppRoot extends LitElement {
                         <div class="color-row">
                             <input
                                 type="color"
+                                class="color-picker"
                                 .value=${this.profileDraft.color}
                                 @input=${this.handleProfileColorInput}
                             />
-                            <div class="color-swatches">
-                                ${PROFILE_COLORS.map(
-                                    (color) => html`
-                                        <button
-                                            type="button"
-                                            class="swatch"
-                                            style=${`--swatch:${color}`}
-                                            @click=${() =>
-                                                this.setProfileColor(color)}
-                                            aria-label=${`Use ${color}`}
-                                        ></button>
-                                    `
-                                )}
-                            </div>
                             <button
                                 type="button"
                                 class="ghost"
@@ -361,6 +390,74 @@ export class AppRoot extends LitElement {
         `;
     }
 
+    private renderProfilePanel() {
+        if (!this.profile) {
+            return null;
+        }
+
+        const localId = this.localParticipantId;
+        const others = this.participants.filter(
+            (participant) => participant.id !== localId
+        );
+
+        return html`
+            <div class="profile-panel">
+                <button
+                    type="button"
+                    class="participant-circle self"
+                    style=${`--circle:${this.profile.color}`}
+                    @click=${this.openProfileDialog}
+                    aria-label="Edit profile"
+                    title="Edit profile"
+                >
+                    ${this.profileInitials}
+                </button>
+                <div class="participant-stack" role="list">
+                    ${others.map(
+                        (participant) => html`
+                            <span
+                                class="participant-circle peer"
+                                role="listitem"
+                                style=${`--circle:${participant.color}`}
+                                title=${participant.label}
+                            >
+                                ${this.participantInitials(participant.label)}
+                            </span>
+                        `
+                    )}
+                </div>
+            </div>
+        `;
+    }
+
+    private renderOnboarding() {
+        if (!this.showOnboarding) return null;
+        return html`
+            <div class="onboarding-card" role="dialog" aria-live="polite">
+                <div class="onboarding-header">
+                    <p class="eyebrow">Quick guide</p>
+                    <button
+                        type="button"
+                        class="ghost onboarding-dismiss"
+                        aria-label="Dismiss onboarding"
+                        @click=${this.dismissOnboarding}
+                    >
+                        ×
+                    </button>
+                </div>
+                <h3>Welcome to libRetro</h3>
+                <ul>
+                    <li>Double-click anywhere on the board to drop a sticky.</li>
+                    <li>Hold and drag to pan; use the +/- buttons to zoom.</li>
+                    <li>Press <strong>Shift + C</strong> to fire one confetti sling.</li>
+                </ul>
+                <button class="primary" type="button" @click=${this.dismissOnboarding}>
+                    Got it
+                </button>
+            </div>
+        `;
+    }
+
     private handleFilterChange = (event: Event) => {
         const value = (event.target as HTMLSelectElement).value;
         this.highlightedParticipantId = value || null;
@@ -389,7 +486,71 @@ export class AppRoot extends LitElement {
             .value as BackgroundKey;
         this.background = value;
         this.persistBackground(value);
+        this.controller?.setBoardBackground(value);
     };
+
+    private handleConfettiShortcut = (event: KeyboardEvent) => {
+        if (!this.isReadyForConfetti || !this.isShortcutEvent(event)) {
+            return;
+        }
+        event.preventDefault();
+        this.confettiEnabled = !this.confettiEnabled;
+    };
+
+    private handleConfettiShot = () => {
+        this.confettiEnabled = false;
+    };
+
+    private get isReadyForConfetti() {
+        return Boolean(this.boardId && this.controller && this.profile);
+    }
+
+    private get localParticipantId() {
+        return this.controller?.getLocalParticipant()?.id ?? null;
+    }
+
+    private get profileInitials() {
+        const name = this.profile?.name?.trim();
+        if (!name) {
+            return "YOU";
+        }
+        const parts = name
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((part) => part[0])
+            .join("");
+        return (parts || name.slice(0, 2)).toUpperCase();
+    }
+
+    private participantInitials(label?: string | null) {
+        const safe = label?.trim();
+        if (!safe) return "?";
+        const parts = safe
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((part) => part[0])
+            .join("");
+        return (parts || safe.slice(0, 2)).toUpperCase();
+    }
+
+    private isShortcutEvent(event: KeyboardEvent) {
+        if (!event.shiftKey || event.key.toLowerCase() !== "c") {
+            return false;
+        }
+        const target = event.target as HTMLElement | null;
+        if (!target) return true;
+        const tag = target.tagName;
+        const editable =
+            target.getAttribute("contenteditable")?.toLowerCase() === "true";
+        return !(
+            editable ||
+            tag === "INPUT" ||
+            tag === "TEXTAREA" ||
+            tag === "SELECT"
+        );
+    }
 
     private handleProfileSubmit = (event: Event) => {
         event.preventDefault();
@@ -420,14 +581,20 @@ export class AppRoot extends LitElement {
         this.profileDraft = { ...this.profileDraft, color: target.value };
     };
 
-    private setProfileColor(color: string) {
-        this.profileDraft = { ...this.profileDraft, color };
-    }
-
     private randomizeProfileColor = () => {
         const next =
             PROFILE_COLORS[Math.floor(Math.random() * PROFILE_COLORS.length)];
         this.profileDraft = { ...this.profileDraft, color: next };
+    };
+
+    private dismissOnboarding = () => {
+        this.showOnboarding = false;
+        if (typeof window === "undefined") return;
+        try {
+            window.localStorage.setItem(ONBOARDING_STORAGE_KEY, "dismissed");
+        } catch {
+            // ignore storage errors
+        }
     };
 
     private openProfileDialog = () => {
@@ -454,7 +621,7 @@ export class AppRoot extends LitElement {
 
     private initializeBackground() {
         const stored = this.readBackgroundFromStorage();
-        this.background = stored ?? "good-bad";
+        this.background = stored ?? "start-stop-continue";
     }
 
     private readBackgroundFromStorage(): BackgroundKey | null {
@@ -627,6 +794,97 @@ export class AppRoot extends LitElement {
             border-color: rgba(15, 23, 42, 0.15);
         }
 
+        .profile-panel {
+            position: absolute;
+            top: 1.5rem;
+            right: 1.5rem;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .participant-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+            align-items: center;
+        }
+
+        .onboarding-card {
+            position: absolute;
+            top: 1.5rem;
+            left: 1.5rem;
+            width: min(280px, 90vw);
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: 16px;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.15);
+            padding: 1rem 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.65rem;
+        }
+
+        .onboarding-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .onboarding-card h3 {
+            margin: 0;
+            font-size: 1.1rem;
+        }
+
+        .onboarding-card ul {
+            margin: 0;
+            padding-left: 1.1rem;
+            color: #475569;
+            font-size: 0.9rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .onboarding-card strong {
+            font-weight: 600;
+            color: #0f172a;
+        }
+
+        .onboarding-dismiss {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            display: grid;
+            place-items: center;
+            font-size: 1.1rem;
+            border-radius: 50%;
+        }
+
+        .participant-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--circle, #94a3b8);
+            color: #0f172a;
+            font-weight: 600;
+            text-transform: uppercase;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(15, 23, 42, 0.18);
+            box-shadow: 0 6px 12px rgba(15, 23, 42, 0.12);
+        }
+
+        .participant-circle.self {
+            width: 48px;
+            height: 48px;
+            cursor: pointer;
+        }
+
         .profile-overlay {
             position: fixed;
             inset: 0;
@@ -679,16 +937,6 @@ export class AppRoot extends LitElement {
             font-size: 1rem;
         }
 
-        input[type="color"] {
-            width: 44px;
-            height: 44px;
-            border: none;
-            border-radius: 8px;
-            background: transparent;
-            padding: 0;
-            cursor: pointer;
-        }
-
         .color-row {
             display: flex;
             align-items: center;
@@ -696,24 +944,24 @@ export class AppRoot extends LitElement {
             flex-wrap: wrap;
         }
 
-        .color-swatches {
-            display: flex;
-            gap: 0.35rem;
-            flex-wrap: wrap;
-        }
-
-        .swatch {
-            width: 26px;
-            height: 26px;
-            border-radius: 50%;
-            border: 1px solid rgba(15, 23, 42, 0.2);
-            background: var(--swatch, #fbbf24);
+        .color-picker {
+            width: 52px;
+            height: 44px;
+            padding: 0;
+            border: 1px solid rgba(148, 163, 184, 0.6);
+            border-radius: 10px;
+            background: #ffffff;
             cursor: pointer;
         }
 
-        .swatch:focus-visible {
-            outline: 2px solid #0ea5e9;
-            outline-offset: 2px;
+        .color-picker::-webkit-color-swatch-wrapper {
+            padding: 0;
+            border-radius: 8px;
+        }
+
+        .color-picker::-webkit-color-swatch {
+            border: none;
+            border-radius: 8px;
         }
 
         .profile-actions {

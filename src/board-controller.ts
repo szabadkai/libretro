@@ -1,7 +1,7 @@
 import { v4 as uuid } from 'uuid'
 import { joinRoom, selfId } from 'trystero/torrent'
 import type { Room } from 'trystero'
-import type { ColumnId, Note, Participant } from './types'
+import type { BackgroundKey, ColumnId, Note, Participant } from './types'
 import { loadSnapshot, saveSnapshot } from './utils/persist'
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected'
@@ -13,6 +13,12 @@ type NoteMessage =
   | { type: 'sync-response'; notes: Note[] }
 
 type PresenceMessage = { participant: Participant }
+
+type FunMessage = { type: 'confetti'; shot: ConfettiShot }
+
+type SettingsMessage =
+  | { type: 'background'; value: BackgroundKey }
+  | { type: 'background-request' }
 
 interface SnapshotPayload {
   notes: Note[]
@@ -28,6 +34,22 @@ export interface LocalParticipantConfig {
   color?: string
 }
 
+const DEFAULT_BACKGROUND: BackgroundKey = 'start-stop-continue'
+const BACKGROUND_VALUES: BackgroundKey[] = ['start-stop-continue', 'mad-sad-glad']
+const isBackgroundKey = (value: unknown): value is BackgroundKey =>
+  typeof value === 'string' && BACKGROUND_VALUES.includes(value as BackgroundKey)
+
+export interface ConfettiShot {
+  id: string
+  originX: number
+  originY: number
+  vectorX: number
+  vectorY: number
+  power: number
+  color: string
+  createdAt: number
+}
+
 export class BoardController extends EventTarget {
   readonly boardId: string
   status: ConnectionStatus = 'connecting'
@@ -41,12 +63,18 @@ export class BoardController extends EventTarget {
     payload: PresenceMessage,
     targetPeers?: string | string[] | null
   ) => Promise<void[]>
+  private sendFunMessage?: (payload: FunMessage, targetPeers?: string | string[] | null) => Promise<void[]>
+  private sendSettingsMessage?: (
+    payload: SettingsMessage,
+    targetPeers?: string | string[] | null
+  ) => Promise<void[]>
   private persistHandle?: number
   private notes = new Map<string, Note>()
   private participants = new Map<string, Participant>()
   private readonly localParticipant: Participant
+  private background: BackgroundKey = DEFAULT_BACKGROUND
 
-  constructor(boardId: string, profile?: LocalParticipantConfig) {
+  constructor(boardId: string, profile?: LocalParticipantConfig, initialBackground?: BackgroundKey) {
     super()
     this.boardId = boardId
     this.localParticipant = {
@@ -54,6 +82,7 @@ export class BoardController extends EventTarget {
       label: profile?.label?.trim() || `Guest ${uuid().slice(0, 4).toUpperCase()}`,
       color: profile?.color || this.randomAccent(),
     }
+    this.background = initialBackground ?? DEFAULT_BACKGROUND
 
     this.participants.set(selfId, this.localParticipant)
     this.restoreSnapshot()
@@ -73,6 +102,28 @@ export class BoardController extends EventTarget {
 
   getParticipants() {
     return Array.from(this.participants.values())
+  }
+
+  getLocalParticipant() {
+    return this.localParticipant
+  }
+
+  getBoardBackground() {
+    return this.background
+  }
+
+  setBoardBackground(value: BackgroundKey) {
+    if (!value) return
+    const changed = value !== this.background
+    if (changed) {
+      this.applyBackground(value)
+    }
+    this.sendSettingsMessage?.({ type: 'background', value })
+  }
+
+  fireConfetti(shot: ConfettiShot) {
+    this.dispatchEvent(new CustomEvent<ConfettiShot>('confetti-fired', { detail: shot }))
+    this.sendFunMessage?.({ type: 'confetti', shot })
   }
 
   createNote(columnId: ColumnId, rawX?: number, rawY?: number) {
@@ -131,6 +182,8 @@ export class BoardController extends EventTarget {
     this.updateStatus('connected')
     this.setupMessaging()
     this.setupPresence()
+    this.setupFunChannel()
+    this.setupSettingsChannel()
   }
 
   private setupMessaging() {
@@ -190,6 +243,37 @@ export class BoardController extends EventTarget {
     this.sendPresenceMessage?.({ participant: this.localParticipant })
   }
 
+  private setupFunChannel() {
+    if (!this.room) return
+
+    const [rawSendFun, rawGetFun] = this.room.makeAction<any>('fun')
+    this.sendFunMessage = (payload, targetPeers) => rawSendFun(payload, targetPeers)
+
+    rawGetFun((message: FunMessage) => {
+      if (message?.type !== 'confetti' || !message.shot) return
+      this.dispatchEvent(
+        new CustomEvent<ConfettiShot>('confetti-fired', { detail: message.shot })
+      )
+    })
+  }
+
+  private setupSettingsChannel() {
+    if (!this.room) return
+
+    const [rawSendSettings, rawGetSettings] = this.room.makeAction<any>('settings')
+    this.sendSettingsMessage = (payload, targetPeers) => rawSendSettings(payload, targetPeers)
+
+    rawGetSettings((message: SettingsMessage, peerId: string) => {
+      if (message?.type === 'background' && isBackgroundKey(message.value)) {
+        this.applyBackground(message.value)
+      } else if (message?.type === 'background-request') {
+        this.respondWithBackground(peerId)
+      }
+    })
+
+    this.requestBackgroundSync()
+  }
+
   private broadcastNote(payload: NoteMessage) {
     this.sendNoteMessage?.(payload)
   }
@@ -226,6 +310,20 @@ export class BoardController extends EventTarget {
         detail: this.getParticipants(),
       })
     )
+  }
+
+  private applyBackground(value: BackgroundKey) {
+    if (!value || value === this.background) return
+    this.background = value
+    this.dispatchEvent(new CustomEvent<BackgroundKey>('background-changed', { detail: value }))
+  }
+
+  private respondWithBackground(targetPeers?: string | string[] | null) {
+    this.sendSettingsMessage?.({ type: 'background', value: this.background }, targetPeers ?? null)
+  }
+
+  private requestBackgroundSync() {
+    this.sendSettingsMessage?.({ type: 'background-request' })
   }
 
   private normalizePosition(rawX?: number, rawY?: number) {
