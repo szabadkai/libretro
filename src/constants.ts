@@ -1,4 +1,4 @@
-import type { ColumnDefinition } from './types'
+import type { BackgroundKey, ColumnDefinition } from './types'
 
 export const COLUMNS: ColumnDefinition[] = [
   {
@@ -30,3 +30,56 @@ export const COLUMNS: ColumnDefinition[] = [
 export const DEFAULT_NOTE_WIDTH = 110
 export const DEFAULT_NOTE_HEIGHT = 70
 export const NOTE_DRAG_TYPE = 'application/x-metro-note'
+
+export const BOARD_BACKGROUNDS: Array<{
+  id: BackgroundKey
+  label: string
+  description: string
+  asset: string
+  columns: Array<{ title: string; description: string; accent: string }>
+}> = [
+  {
+    id: 'good-bad',
+    label: 'Good vs Bad',
+    description: 'Classic two-column retro',
+    asset: '/good-bad.png',
+    columns: [
+      { title: 'Good', description: 'Wins and bright spots', accent: '#22c55e' },
+      { title: 'Bad', description: 'Issues or blockers', accent: '#ef4444' },
+    ],
+  },
+  {
+    id: 'start-stop-continue',
+    label: 'Start / Stop / Continue',
+    description: 'Three-part action board',
+    asset: '/start-stop-continue.png',
+    columns: [
+      { title: 'Start', description: 'Ideas to try', accent: '#0ea5e9' },
+      { title: 'Stop', description: 'Habits to drop', accent: '#f97316' },
+      { title: 'Continue', description: 'Keep doing these', accent: '#6366f1' },
+    ],
+  },
+  {
+    id: 'mad-sad-glad',
+    label: 'Mad / Sad / Glad',
+    description: 'Emotional check-in',
+    asset: '/mad-sad-glad.png',
+    columns: [
+      { title: 'Mad', description: 'Frustrations & annoyances', accent: '#f87171' },
+      { title: 'Sad', description: 'Letdowns & concerns', accent: '#facc15' },
+      { title: 'Glad', description: 'Highlights & celebrations', accent: '#34d399' },
+    ],
+  },
+  {
+    id: 'four-ls',
+    label: '4Ls',
+    description: 'Liked, Learned, Lacked, Longed for',
+    asset: '/4Ls.png',
+    columns: [
+      { title: 'Liked', description: 'What worked well', accent: '#22c55e' },
+      { title: 'Learned', description: 'New insights', accent: '#3b82f6' },
+      { title: 'Lacked', description: 'Missing pieces', accent: '#fbbf24' },
+      { title: 'Longed for', description: 'Wish we had…', accent: '#a855f7' },
+    ],
+  },
+]

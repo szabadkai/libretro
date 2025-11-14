@@ -87,7 +87,7 @@ export class AppRoot extends LitElement {
                               <div class="toolbar-brand">
                                   <span class="logo-dot"></span>
                                   <div class="brand-text">
-                                      <p class="title">libRetro</p>
+                                      <p class="title">Metro Retro</p>
                                       <p class="meta">
                                           Board #${this.shortBoardId}
                                       </p>

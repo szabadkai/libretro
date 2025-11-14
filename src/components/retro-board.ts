@@ -2,8 +2,8 @@ import { LitElement, css, html, type PropertyValues } from 'lit'
 import { customElement, property, query, state } from 'lit/decorators.js'
 import { styleMap } from 'lit/directives/style-map.js'
 import type { BoardController } from '../board-controller'
-import { COLUMNS, DEFAULT_NOTE_HEIGHT, DEFAULT_NOTE_WIDTH, NOTE_DRAG_TYPE } from '../constants'
-import type { ColumnId, Note } from '../types'
+import { BOARD_BACKGROUNDS, COLUMNS, DEFAULT_NOTE_HEIGHT, DEFAULT_NOTE_WIDTH, NOTE_DRAG_TYPE } from '../constants'
+import type { BackgroundKey, ColumnId, Note } from '../types'
 import './sticky-note'
 
 interface DragPayload {
@@ -17,10 +17,15 @@ export class RetroBoard extends LitElement {
   @property({ attribute: false }) controller?: BoardController
   @state() private notes: Note[] = []
   @state() private zoom = 1
+  @state() private panX = 0
+  @state() private panY = 0
+  @state() private isPanning = false
   @property({ attribute: false }) highlightedParticipantId: string | null = null
+  @property({ attribute: false }) background: BackgroundKey = 'good-bad'
   @query('.note-layer') private noteLayer?: HTMLDivElement
 
   private unsubscribe?: () => void
+  private panOrigin: { x: number; y: number } | null = null
 
   disconnectedCallback() {
     this.unsubscribe?.()
@@ -41,16 +46,30 @@ export class RetroBoard extends LitElement {
         @dragover=${this.handleDragOver}
         @drop=${this.handleDrop}
         @wheel=${this.handleWheel}
+        @pointerdown=${this.handlePointerDown}
+        @pointermove=${this.handlePointerMove}
+        @pointerup=${this.handlePointerUp}
+        @pointerleave=${this.handlePointerUp}
       >
-        <div class="workspace" style=${styleMap({ '--scale': `${this.zoom}` })}>
-          <div class="note-layer">
-          ${this.notes.map((note) => this.renderNote(note))}
+        <div
+          class="pan-layer"
+          style=${styleMap({
+            '--pan-x': `${this.panX}px`,
+            '--pan-y': `${this.panY}px`,
+          })}
+        >
+          <div class="workspace" style=${styleMap({ '--scale': `${this.zoom}` })}>
+            ${this.renderTemplate()}
+            <div class="note-layer">
+              ${this.notes.map((note) => this.renderNote(note))}
+            </div>
           </div>
         </div>
         <div class="canvas-controls" @click=${(event: Event) => event.stopPropagation()}>
-          <button @click=${this.zoomOut} aria-label="Zoom out">−</button>
+          <button class="icon" @click=${this.zoomOut} aria-label="Zoom out">−</button>
           <span>${Math.round(this.zoom * 100)}%</span>
-          <button @click=${this.zoomIn} aria-label="Zoom in">+</button>
+          <button class="icon" @click=${this.zoomIn} aria-label="Zoom in">+</button>
+          <button class="reset" @click=${this.resetView} aria-label="Reset view">Reset</button>
         </div>
         ${!this.controller
           ? html`<div class="board-placeholder">Connecting to board…</div>`
@@ -103,6 +122,21 @@ export class RetroBoard extends LitElement {
     `
   }
 
+  private renderTemplate() {
+    const layout = this.getBackgroundLayout()
+    if (!layout) return null
+    return html`
+      <div
+        class="board-template"
+        style=${styleMap({
+          '--template-image': `url(${layout.asset})`,
+        })}
+        aria-hidden="true"
+        role="presentation"
+      ></div>
+    `
+  }
+
   private handleDoubleClick(event: MouseEvent) {
     if (!this.controller) return
     if (this.eventTargetsNote(event)) return
@@ -142,10 +176,40 @@ export class RetroBoard extends LitElement {
   }
 
   private handleWheel(event: WheelEvent) {
-    if (!event.ctrlKey && !event.metaKey) return
-    event.preventDefault()
-    const delta = -event.deltaY * 0.001
-    this.setZoom(this.zoom + delta)
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault()
+      const delta = -event.deltaY * 0.001
+      this.setZoom(this.zoom + delta)
+      return
+    }
+    this.panX -= event.deltaX
+    this.panY -= event.deltaY
+  }
+
+  private handlePointerDown(event: PointerEvent) {
+    if (event.button !== 0) return
+    if (this.eventTargetsNote(event)) return
+    this.isPanning = true
+    this.panOrigin = { x: event.clientX, y: event.clientY }
+    const target = event.currentTarget as HTMLElement
+    target.setPointerCapture?.(event.pointerId)
+  }
+
+  private handlePointerMove(event: PointerEvent) {
+    if (!this.isPanning || !this.panOrigin) return
+    const deltaX = event.clientX - this.panOrigin.x
+    const deltaY = event.clientY - this.panOrigin.y
+    this.panX += deltaX
+    this.panY += deltaY
+    this.panOrigin = { x: event.clientX, y: event.clientY }
+  }
+
+  private handlePointerUp(event: PointerEvent) {
+    if (!this.isPanning) return
+    this.isPanning = false
+    this.panOrigin = null
+    const target = event.currentTarget as HTMLElement
+    target.releasePointerCapture?.(event.pointerId)
   }
 
   private zoomIn = () => {
@@ -154,6 +218,12 @@ export class RetroBoard extends LitElement {
 
   private zoomOut = () => {
     this.setZoom(this.zoom - 0.1)
+  }
+
+  private resetView = () => {
+    this.zoom = 1
+    this.panX = 0
+    this.panY = 0
   }
 
   private setZoom(value: number) {
@@ -168,6 +238,10 @@ export class RetroBoard extends LitElement {
 
   private get defaultColumnId() {
     return (COLUMNS[0]?.id ?? 'good') as ColumnId
+  }
+
+  private getBackgroundLayout() {
+    return BOARD_BACKGROUNDS.find((layout) => layout.id === this.background)
   }
 
   private eventTargetsNote(event: Event) {
@@ -205,11 +279,36 @@ export class RetroBoard extends LitElement {
       overflow: hidden;
     }
 
+    .pan-layer {
+      position: absolute;
+      inset: 0;
+      transform: translate(var(--pan-x, 0px), var(--pan-y, 0px));
+    }
+
     .workspace {
       position: absolute;
       inset: 0;
       transform-origin: 0 0;
       transform: scale(var(--scale, 1));
+    }
+
+    .board-template {
+      position: absolute;
+      top: clamp(40px, 10vh, 120px);
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(1100px, calc(100% - 2rem));
+      height: min(620px, calc(100% - 120px));
+      max-height: 720px;
+      background-image: var(--template-image);
+      background-size: cover;
+      background-position: center;
+      border-radius: 28px;
+      border: 1px solid rgba(15, 23, 42, 0.1);
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.15);
+      pointer-events: none;
+      z-index: 1;
+      opacity: 0.95;
     }
 
     .note-layer {
@@ -246,7 +345,7 @@ export class RetroBoard extends LitElement {
       background: rgba(255, 255, 255, 0.9);
       border: 1px solid rgba(15, 23, 42, 0.12);
       border-radius: 999px;
-      padding: 0.25rem 0.75rem;
+      padding: 0.35rem 0.75rem;
       font-size: 0.9rem;
       color: #0f172a;
       box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
@@ -254,17 +353,28 @@ export class RetroBoard extends LitElement {
     }
 
     .canvas-controls button {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
       border: none;
       background: rgba(15, 23, 42, 0.06);
       color: inherit;
-      font-size: 1.1rem;
+      font-size: 0.85rem;
       cursor: pointer;
       line-height: 1;
+    }
+
+    .canvas-controls button.icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
       display: grid;
       place-items: center;
+      font-size: 1.1rem;
+    }
+
+    .canvas-controls button.reset {
+      border-radius: 8px;
+      padding: 0.2rem 0.7rem;
+      background: rgba(15, 23, 42, 0.08);
+      font-size: 0.8rem;
     }
 
     .canvas-controls span {

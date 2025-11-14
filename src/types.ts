@@ -1,4 +1,9 @@
 export type ColumnId = 'good' | 'bad' | 'start' | 'stop'
+export type BackgroundKey =
+  | 'good-bad'
+  | 'start-stop-continue'
+  | 'mad-sad-glad'
+  | 'four-ls'
 
 export interface Note {
   id: string
