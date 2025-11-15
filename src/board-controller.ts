@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid'
 import type { Room } from 'trystero'
-import { joinRoom, selfId } from './trystero-provider'
+import { joinRoom, providerKey, selfId } from './trystero-provider'
 import type { BackgroundKey, ColumnId, Note, Participant } from './types'
 import { loadSnapshot, saveSnapshot } from './utils/persist'
 
@@ -31,6 +31,8 @@ const RELAY_SOURCE =
 const RELAY_LIST = RELAY_SOURCE.split(',')
   .map((relay: string) => relay.trim())
   .filter(Boolean)
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY
 
 export interface LocalParticipantConfig {
   label?: string
@@ -175,12 +177,9 @@ export class BoardController extends EventTarget {
   }
 
   private connectRoom() {
-    const config = {
-      appId: 'metro-retro',
-      relayUrls: RELAY_LIST.length ? RELAY_LIST : undefined,
-    }
+    const config = this.buildRoomConfig()
 
-    this.room = joinRoom(config, this.boardId)
+    this.room = joinRoom(config as any, this.boardId)
 
     this.updateStatus('connected')
     this.setupMessaging()
@@ -327,6 +326,30 @@ export class BoardController extends EventTarget {
 
   private requestBackgroundSync() {
     this.sendSettingsMessage?.({ type: 'background-request' })
+  }
+
+  private buildRoomConfig() {
+    if (providerKey === 'supabase') {
+      if (!SUPABASE_URL || !SUPABASE_KEY) {
+        throw new Error(
+          'Supabase provider selected but VITE_SUPABASE_URL or VITE_SUPABASE_KEY is missing'
+        )
+      }
+      return {
+        appId: SUPABASE_URL,
+        supabaseKey: SUPABASE_KEY,
+      }
+    }
+
+    const config: Record<string, unknown> = {
+      appId: 'metro-retro',
+    }
+
+    if ((providerKey === 'torrent' || providerKey === 'mqtt') && RELAY_LIST.length) {
+      config.relayUrls = RELAY_LIST
+    }
+
+    return config
   }
 
   private normalizePosition(rawX?: number, rawY?: number) {

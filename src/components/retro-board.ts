@@ -12,6 +12,9 @@ interface DragPayload {
   offsetY: number
 }
 
+const BOARD_WIDTH = 2200
+const BOARD_HEIGHT = 1240
+
 @customElement('retro-board')
 export class RetroBoard extends LitElement {
   @property({ attribute: false }) controller?: BoardController
@@ -23,6 +26,7 @@ export class RetroBoard extends LitElement {
   @property({ attribute: false }) highlightedParticipantId: string | null = null
   @property({ attribute: false }) background: BackgroundKey = 'start-stop-continue'
   @query('.note-layer') private noteLayer?: HTMLDivElement
+  @query('.workspace') private workspace?: HTMLDivElement
 
   private unsubscribe?: () => void
   private panOrigin: { x: number; y: number } | null = null
@@ -51,6 +55,7 @@ export class RetroBoard extends LitElement {
   connectedCallback() {
     super.connectedCallback()
     window.addEventListener('keydown', this.handleKeyZoom, { passive: false })
+    queueMicrotask(() => this.centerBoard())
   }
 
   disconnectedCallback() {
@@ -85,7 +90,14 @@ export class RetroBoard extends LitElement {
             '--pan-y': `${this.panY}px`,
           })}
         >
-          <div class="workspace" style=${styleMap({ '--scale': `${this.zoom}` })}>
+          <div
+            class="workspace"
+            style=${styleMap({
+              '--scale': `${this.zoom}`,
+              '--board-width': `${BOARD_WIDTH}px`,
+              '--board-height': `${BOARD_HEIGHT}px`,
+            })}
+          >
             ${this.renderTemplate()}
             <div class="note-layer">
               ${this.notes.map((note) => this.renderNote(note))}
@@ -254,8 +266,7 @@ export class RetroBoard extends LitElement {
 
   private resetView = () => {
     this.zoom = 1
-    this.panX = 0
-    this.panY = 0
+    this.centerBoard()
   }
 
   private zoomTo(value: number, pivot?: { x: number; y: number }) {
@@ -284,8 +295,15 @@ export class RetroBoard extends LitElement {
     return editable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
   }
 
+  private centerBoard() {
+    const viewport = this.getBoundingClientRect()
+    if (!viewport.width || !viewport.height) return
+    this.panX = (viewport.width - BOARD_WIDTH * this.zoom) / 2
+    this.panY = (viewport.height - BOARD_HEIGHT * this.zoom) / 2
+  }
+
   private getWorkspaceRect() {
-    return this.noteLayer?.getBoundingClientRect() ?? this.getBoundingClientRect()
+    return this.workspace?.getBoundingClientRect() ?? this.noteLayer?.getBoundingClientRect() ?? this.getBoundingClientRect()
   }
 
   private get defaultColumnId() {
@@ -339,19 +357,17 @@ export class RetroBoard extends LitElement {
 
     .workspace {
       position: absolute;
-      inset: 0;
+      width: var(--board-width, 2200px);
+      height: var(--board-height, 1240px);
       transform-origin: 0 0;
       transform: scale(var(--scale, 1));
     }
 
     .board-template {
       position: absolute;
-      top: clamp(20px, 8vh, 100px);
-      left: 50%;
-      transform: translateX(-50%);
-      width: min(2200px, calc(100% - 1rem));
-      height: min(1240px, calc(100% - 80px));
-      max-height: 1440px;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       background-image: var(--template-image);
       background-size: cover;
       background-position: center;
@@ -366,6 +382,8 @@ export class RetroBoard extends LitElement {
     .note-layer {
       position: absolute;
       inset: 0;
+      width: 100%;
+      height: 100%;
       z-index: 2;
       pointer-events: none;
     }
