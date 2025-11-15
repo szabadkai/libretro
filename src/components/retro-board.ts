@@ -26,8 +26,35 @@ export class RetroBoard extends LitElement {
 
   private unsubscribe?: () => void
   private panOrigin: { x: number; y: number } | null = null
+  private readonly zoomStep = 0.45
+  private readonly minZoom = 0.4
+  private readonly maxZoom = 3
+  private handleKeyZoom = (event: KeyboardEvent) => {
+    if ((!event.metaKey && !event.ctrlKey) || this.shouldIgnoreKeyZoom(event)) {
+      return
+    }
+    const rect = this.getWorkspaceRect()
+    if (!rect) return
+
+    if (event.key === '=' || event.key === '+') {
+      event.preventDefault()
+      this.zoomTo(this.zoom + this.zoomStep, { x: rect.width / 2, y: rect.height / 2 })
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault()
+      this.zoomTo(this.zoom - this.zoomStep, { x: rect.width / 2, y: rect.height / 2 })
+    } else if (event.key === '0') {
+      event.preventDefault()
+      this.resetView()
+    }
+  }
+
+  connectedCallback() {
+    super.connectedCallback()
+    window.addEventListener('keydown', this.handleKeyZoom, { passive: false })
+  }
 
   disconnectedCallback() {
+    window.removeEventListener('keydown', this.handleKeyZoom)
     this.unsubscribe?.()
     super.disconnectedCallback()
   }
@@ -176,10 +203,13 @@ export class RetroBoard extends LitElement {
   }
 
   private handleWheel(event: WheelEvent) {
+    event.preventDefault()
     if (event.ctrlKey || event.metaKey) {
-      event.preventDefault()
-      const delta = -event.deltaY * 0.001
-      this.setZoom(this.zoom + delta)
+      const rect = this.getWorkspaceRect()
+      if (!rect) return
+      const pivot = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+      const factor = Math.exp(-event.deltaY * 0.0045)
+      this.zoomTo(this.zoom * factor, pivot)
       return
     }
     this.panX -= event.deltaX
@@ -213,11 +243,13 @@ export class RetroBoard extends LitElement {
   }
 
   private zoomIn = () => {
-    this.setZoom(this.zoom + 0.1)
+    const rect = this.getWorkspaceRect()
+    this.zoomTo(this.zoom * (1 + this.zoomStep), rect ? { x: rect.width / 2, y: rect.height / 2 } : undefined)
   }
 
   private zoomOut = () => {
-    this.setZoom(this.zoom - 0.1)
+    const rect = this.getWorkspaceRect()
+    this.zoomTo(this.zoom * (1 - this.zoomStep / 2), rect ? { x: rect.width / 2, y: rect.height / 2 } : undefined)
   }
 
   private resetView = () => {
@@ -226,10 +258,30 @@ export class RetroBoard extends LitElement {
     this.panY = 0
   }
 
-  private setZoom(value: number) {
-    const clamped = Math.min(2, Math.max(0.5, value))
+  private zoomTo(value: number, pivot?: { x: number; y: number }) {
+    const clamped = Math.min(this.maxZoom, Math.max(this.minZoom, value))
     if (clamped === this.zoom) return
+    if (pivot) {
+      this.adjustPanForZoom(clamped, pivot)
+    }
     this.zoom = Number(clamped.toFixed(2))
+  }
+
+  private adjustPanForZoom(nextZoom: number, pivot: { x: number; y: number }) {
+    const oldZoom = this.zoom
+    if (!oldZoom) return
+    const boardX = (pivot.x - this.panX) / oldZoom
+    const boardY = (pivot.y - this.panY) / oldZoom
+    this.panX = pivot.x - boardX * nextZoom
+    this.panY = pivot.y - boardY * nextZoom
+  }
+
+  private shouldIgnoreKeyZoom(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null
+    if (!target) return false
+    const tag = target.tagName
+    const editable = target.getAttribute('contenteditable')?.toLowerCase() === 'true'
+    return editable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
   }
 
   private getWorkspaceRect() {

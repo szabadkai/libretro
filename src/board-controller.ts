@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid'
-import { joinRoom, selfId } from 'trystero/torrent'
 import type { Room } from 'trystero'
+import { joinRoom, selfId } from './trystero-provider'
 import type { BackgroundKey, ColumnId, Note, Participant } from './types'
 import { loadSnapshot, saveSnapshot } from './utils/persist'
 
@@ -24,8 +24,11 @@ interface SnapshotPayload {
   notes: Note[]
 }
 
-const RELAY_LIST = (import.meta.env.VITE_TORRENT_RELAYS ?? '')
-  .split(',')
+const RELAY_SOURCE =
+  import.meta.env.VITE_TRYSTERO_RELAYS ??
+  import.meta.env.VITE_TORRENT_RELAYS ??
+  ''
+const RELAY_LIST = RELAY_SOURCE.split(',')
   .map((relay: string) => relay.trim())
   .filter(Boolean)
 
