@@ -23,8 +23,12 @@ export class RetroBoard extends LitElement {
   @state() private panX = 0
   @state() private panY = 0
   @state() private isPanning = false
+  @state() private pendingEditNoteId: string | null = null
   @property({ attribute: false }) highlightedParticipantId: string | null = null
   @property({ attribute: false }) background: BackgroundKey = 'start-stop-continue'
+  @property({ attribute: false }) localParticipantId: string | null = null
+  @property({ attribute: false }) ownerKey: string | null = null
+  @property({ attribute: false }) revealAll = false
   @query('.note-layer') private noteLayer?: HTMLDivElement
   @query('.workspace') private workspace?: HTMLDivElement
 
@@ -148,6 +152,18 @@ export class RetroBoard extends LitElement {
       this.highlightedParticipantId && !note.authorId
     )
 
+    const ownerKeyMatch =
+      note.ownerKey && this.ownerKey
+        ? note.ownerKey === this.ownerKey
+        : false
+    const participantMatch =
+      note.authorId && this.localParticipantId
+        ? note.authorId === this.localParticipantId
+        : false
+    const ownNote = ownerKeyMatch || participantMatch
+    const obscured =
+      !this.revealAll && Boolean(note.authorId || note.ownerKey) && !ownNote
+
     return html`
       <sticky-note
         style=${styleMap({
@@ -157,6 +173,9 @@ export class RetroBoard extends LitElement {
         ?dimmed=${dimmed || hiddenByFilter}
         .note=${note}
         .controller=${this.controller}
+        .autoFocus=${note.id === this.pendingEditNoteId}
+        .obscured=${obscured}
+        @note-editing-started=${this.handleNoteEditingStarted}
       ></sticky-note>
     `
   }
@@ -185,7 +204,8 @@ export class RetroBoard extends LitElement {
 
     const x = (event.clientX - rect.left) / this.zoom - DEFAULT_NOTE_WIDTH / 2
     const y = (event.clientY - rect.top) / this.zoom - DEFAULT_NOTE_HEIGHT / 2
-    this.controller.createNote(this.defaultColumnId, x, y)
+    const note = this.controller.createNote(this.defaultColumnId, x, y)
+    this.pendingEditNoteId = note.id
   }
 
   private handleDragOver(event: DragEvent) {
@@ -257,6 +277,13 @@ export class RetroBoard extends LitElement {
   private zoomIn = () => {
     const rect = this.getWorkspaceRect()
     this.zoomTo(this.zoom * (1 + this.zoomStep), rect ? { x: rect.width / 2, y: rect.height / 2 } : undefined)
+  }
+
+  private handleNoteEditingStarted = (event: Event) => {
+    const noteId = (event as CustomEvent<string>).detail
+    if (noteId && this.pendingEditNoteId === noteId) {
+      this.pendingEditNoteId = null
+    }
   }
 
   private zoomOut = () => {

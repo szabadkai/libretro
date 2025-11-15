@@ -9,6 +9,7 @@ export interface Note {
   y: number
   color: string
   authorId?: string
+  ownerKey?: string
   createdAt: number
   updatedAt: number
 }

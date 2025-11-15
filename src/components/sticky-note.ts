@@ -11,6 +11,8 @@ import noteGraphic from "../../note.svg?raw";
 export class StickyNote extends LitElement {
     @property({ attribute: false }) note!: Note;
     @property({ attribute: false }) controller?: BoardController;
+    @property({ attribute: false }) autoFocus = false;
+    @property({ type: Boolean, reflect: true }) obscured = false;
 
     @state() private editing = false;
     @state() private draft = "";
@@ -20,6 +22,14 @@ export class StickyNote extends LitElement {
     updated(changed: Map<string, unknown>) {
         if (changed.has("note") && !this.editing) {
             this.draft = this.note?.text ?? "";
+        }
+        if (
+            (changed.has("autoFocus") || changed.has("note")) &&
+            this.autoFocus &&
+            !this.editing &&
+            this.note
+        ) {
+            this.beginEditing();
         }
     }
 
@@ -147,11 +157,18 @@ export class StickyNote extends LitElement {
         )}`;
     }
 
-    private beginEditing(event: Event) {
-        event.stopPropagation();
-        if (this.editing) return;
+    private beginEditing(event?: Event) {
+        event?.stopPropagation();
+        if (this.editing || this.obscured) return;
         this.editing = true;
         this.draft = this.note.text;
+        this.dispatchEvent(
+            new CustomEvent<string>("note-editing-started", {
+                detail: this.note.id,
+                bubbles: true,
+                composed: true,
+            })
+        );
         this.updateComplete.then(() => {
             this.textarea?.focus();
             this.textarea?.select();
@@ -254,6 +271,19 @@ export class StickyNote extends LitElement {
             display: flex;
             align-items: flex-start;
             overflow: hidden;
+        }
+
+        :host([obscured]) .note-content {
+            filter: blur(10px);
+        }
+
+        :host([obscured]) .note-content::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.35);
+            border-radius: 8px;
+            pointer-events: none;
         }
 
         .note-content :is(p, textarea) {

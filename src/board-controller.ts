@@ -6,6 +6,17 @@ import { loadSnapshot, saveSnapshot } from './utils/persist'
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected'
 
+export type ControllerConnectionError =
+  | { type: 'peer-limit' }
+  | { type: 'connection'; message: string }
+
+export interface TimerState {
+  running: boolean
+  remainingMs: number
+  deadline: number | null
+  updatedAt: number
+}
+
 type NoteMessage =
   | { type: 'upsert'; note: Note }
   | { type: 'delete'; id: string; updatedAt: number }
@@ -19,6 +30,10 @@ type FunMessage = { type: 'confetti'; shot: ConfettiShot }
 type SettingsMessage =
   | { type: 'background'; value: BackgroundKey }
   | { type: 'background-request' }
+  | { type: 'timer-update'; state: TimerState }
+  | { type: 'timer-request' }
+  | { type: 'reveal'; value: boolean }
+  | { type: 'reveal-request' }
 
 interface SnapshotPayload {
   notes: Note[]
@@ -37,6 +52,7 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY
 export interface LocalParticipantConfig {
   label?: string
   color?: string
+  ownerKey?: string
 }
 
 const DEFAULT_BACKGROUND: BackgroundKey = 'start-stop-continue'
@@ -77,11 +93,20 @@ export class BoardController extends EventTarget {
   private notes = new Map<string, Note>()
   private participants = new Map<string, Participant>()
   private readonly localParticipant: Participant
+  private readonly localOwnerKey: string
   private background: BackgroundKey = DEFAULT_BACKGROUND
+  private timerState: TimerState = {
+    running: false,
+    remainingMs: 0,
+    deadline: null,
+    updatedAt: 0,
+  }
+  private revealAll = false
 
   constructor(boardId: string, profile?: LocalParticipantConfig, initialBackground?: BackgroundKey) {
     super()
     this.boardId = boardId
+    this.localOwnerKey = profile?.ownerKey || uuid()
     this.localParticipant = {
       id: selfId,
       label: profile?.label?.trim() || `Guest ${uuid().slice(0, 4).toUpperCase()}`,
@@ -117,6 +142,14 @@ export class BoardController extends EventTarget {
     return this.background
   }
 
+  getTimerState() {
+    return { ...this.timerState }
+  }
+
+  getRevealState() {
+    return this.revealAll
+  }
+
   setBoardBackground(value: BackgroundKey) {
     if (!value) return
     const changed = value !== this.background
@@ -126,12 +159,26 @@ export class BoardController extends EventTarget {
     this.sendSettingsMessage?.({ type: 'background', value })
   }
 
+  setRevealState(value: boolean) {
+    const cleaned = Boolean(value)
+    if (this.revealAll === cleaned) return
+    this.revealAll = cleaned
+    this.sendSettingsMessage?.({ type: 'reveal', value: cleaned })
+    this.dispatchEvent(new CustomEvent<boolean>('reveal-changed', { detail: cleaned }))
+  }
+
+  updateTimerState(state: TimerState) {
+    if (!this.isValidTimerState(state)) return
+    this.applyTimerState(state)
+    this.sendSettingsMessage?.({ type: 'timer-update', state })
+  }
+
   fireConfetti(shot: ConfettiShot) {
     this.dispatchEvent(new CustomEvent<ConfettiShot>('confetti-fired', { detail: shot }))
     this.sendFunMessage?.({ type: 'confetti', shot })
   }
 
-  createNote(columnId: ColumnId, rawX?: number, rawY?: number) {
+  createNote(columnId: ColumnId, rawX?: number, rawY?: number): Note {
     const now = Date.now()
     const note: Note = {
       id: uuid(),
@@ -140,12 +187,14 @@ export class BoardController extends EventTarget {
       ...this.normalizePosition(rawX, rawY),
       color: this.localParticipant.color,
       authorId: this.localParticipant.id,
+      ownerKey: this.localOwnerKey,
       createdAt: now,
       updatedAt: now,
     }
 
     this.applyUpsert(note)
     this.broadcastNote({ type: 'upsert', note })
+    return note
   }
 
   updateNote(noteId: string, updates: Partial<Omit<Note, 'id'>>) {
@@ -179,7 +228,12 @@ export class BoardController extends EventTarget {
   private connectRoom() {
     const config = this.buildRoomConfig()
 
-    this.room = joinRoom(config as any, this.boardId)
+    try {
+      this.room = joinRoom(config as any, this.boardId)
+    } catch (error) {
+      this.handleRoomInitError(error)
+      return
+    }
 
     this.updateStatus('connected')
     this.setupMessaging()
@@ -270,10 +324,20 @@ export class BoardController extends EventTarget {
         this.applyBackground(message.value)
       } else if (message?.type === 'background-request') {
         this.respondWithBackground(peerId)
+      } else if (message?.type === 'timer-update' && this.isValidTimerState(message.state)) {
+        this.applyTimerState(message.state)
+      } else if (message?.type === 'timer-request') {
+        this.respondWithTimer(peerId)
+      } else if (message?.type === 'reveal') {
+        this.applyRevealState(Boolean(message.value))
+      } else if (message?.type === 'reveal-request') {
+        this.respondWithReveal(peerId)
       }
     })
 
     this.requestBackgroundSync()
+    this.requestTimerSync()
+    this.requestRevealSync()
   }
 
   private broadcastNote(payload: NoteMessage) {
@@ -328,6 +392,22 @@ export class BoardController extends EventTarget {
     this.sendSettingsMessage?.({ type: 'background-request' })
   }
 
+  private respondWithTimer(targetPeers?: string | string[] | null) {
+    this.sendSettingsMessage?.({ type: 'timer-update', state: this.timerState }, targetPeers ?? null)
+  }
+
+  private requestTimerSync() {
+    this.sendSettingsMessage?.({ type: 'timer-request' })
+  }
+
+  private respondWithReveal(targetPeers?: string | string[] | null) {
+    this.sendSettingsMessage?.({ type: 'reveal', value: this.revealAll }, targetPeers ?? null)
+  }
+
+  private requestRevealSync() {
+    this.sendSettingsMessage?.({ type: 'reveal-request' })
+  }
+
   private buildRoomConfig() {
     if (providerKey === 'supabase') {
       if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -366,6 +446,24 @@ export class BoardController extends EventTarget {
     this.dispatchEvent(new CustomEvent<ConnectionStatus>('status-changed', { detail: status }))
   }
 
+  private applyTimerState(state: TimerState) {
+    if (!this.isValidTimerState(state)) return
+    if (state.updatedAt < this.timerState.updatedAt) {
+      return
+    }
+    this.timerState = state
+    this.dispatchEvent(new CustomEvent<TimerState>('timer-changed', { detail: state }))
+  }
+
+  private isValidTimerState(state: TimerState) {
+    if (!state) return false
+    const validNumber = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
+    if (!validNumber(state.remainingMs) || state.remainingMs < 0) return false
+    if (state.deadline !== null && !validNumber(state.deadline)) return false
+    if (!validNumber(state.updatedAt)) return false
+    return typeof state.running === 'boolean'
+  }
+
   private restoreSnapshot() {
     const snapshot = loadSnapshot<SnapshotPayload>(this.boardId)
     if (!snapshot?.notes) return
@@ -386,5 +484,31 @@ export class BoardController extends EventTarget {
   private randomAccent() {
     const palette = ['#fbbf24', '#ef4444', '#22d3ee', '#a855f7', '#34d399', '#f472b6']
     return palette[Math.floor(Math.random() * palette.length)]
+  }
+
+  private applyRevealState(value: boolean) {
+    const cleaned = Boolean(value)
+    if (this.revealAll === cleaned) return
+    this.revealAll = cleaned
+    this.dispatchEvent(new CustomEvent<boolean>('reveal-changed', { detail: cleaned }))
+  }
+
+  private handleRoomInitError(error: unknown) {
+    console.error(error)
+    const detail: ControllerConnectionError = this.isPeerLimitError(error)
+      ? {type: 'peer-limit'}
+      : {type: 'connection', message: error instanceof Error ? error.message : 'Failed to connect'}
+    this.updateStatus('disconnected')
+    this.dispatchEvent(new CustomEvent<ControllerConnectionError>('connection-error', {detail}))
+  }
+
+  private isPeerLimitError(error: unknown) {
+    if (!error) return false
+    const message = (error as any)?.message ?? ''
+    if (!message || !/PeerConnection/i.test(message)) {
+      return false
+    }
+    const name = (error as any)?.name
+    return name === 'UnknownError'
   }
 }
