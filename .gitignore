@@ -2,7 +2,6 @@
 node_modules/
 .dist/
 dist/
-docs/assets/index-*.js
 .history/
 # Vite/TypeScript
 .vite/
