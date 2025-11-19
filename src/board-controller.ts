@@ -49,6 +49,15 @@ const RELAY_LIST = RELAY_SOURCE.split(',')
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY
 
+let ICE_SERVERS: RTCIceServer[] | undefined
+try {
+  if (import.meta.env.VITE_ICE_SERVERS) {
+    ICE_SERVERS = JSON.parse(import.meta.env.VITE_ICE_SERVERS)
+  }
+} catch (e) {
+  console.warn('Failed to parse VITE_ICE_SERVERS', e)
+}
+
 export interface LocalParticipantConfig {
   label?: string
   color?: string
@@ -427,6 +436,12 @@ export class BoardController extends EventTarget {
 
     if ((providerKey === 'torrent' || providerKey === 'mqtt') && RELAY_LIST.length) {
       config.relayUrls = RELAY_LIST
+    }
+
+    if (ICE_SERVERS) {
+      config.rtcConfig = {
+        iceServers: ICE_SERVERS,
+      }
     }
 
     return config
